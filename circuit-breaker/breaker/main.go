@@ -37,7 +37,7 @@ func (c *Circuit) checkHealth() {
 			break
 		}
 	}
-	log.Print("Unlocked breaker, good to go!")
+	log.Print("Connection achieved, good to go!")
 	c.isLocked = false
 }
 
