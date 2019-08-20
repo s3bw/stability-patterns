@@ -5,14 +5,12 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Circuit struct {
-	mutex    sync.Mutex
 	isLocked bool
 	health   string
 	tick     time.Duration
@@ -27,19 +25,20 @@ func createCircuit(url string, checkTick time.Duration) *Circuit {
 }
 
 func (c *Circuit) checkHealth() {
-	c.mutex.Lock()
 	c.isLocked = true
-	for c.isLocked {
-		for range time.Tick(c.tick) {
-			log.Print("Attempting connection...")
-			resp, _ := http.Get(c.health)
-			if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
-				c.isLocked = false
-			}
+	for range time.Tick(c.tick) {
+		log.Print("Retrying connection...")
+		resp, err := http.Get(c.health)
+		if err != nil {
+			log.Printf("%s", err)
+			continue
+		} else if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+			log.Printf("%d", resp.StatusCode)
+			break
 		}
 	}
 	log.Print("Unlocked breaker, good to go!")
-	c.mutex.Unlock()
+	c.isLocked = false
 }
 
 type Service struct {
@@ -48,15 +47,23 @@ type Service struct {
 }
 
 func (s *Service) Get(resource string) ([]byte, error) {
+	// If endpoint is not healthy the circuit will break
+	// the endpoint will only be hit again when it is
+	// deemed healthy
 	if !s.circuit.isLocked {
 		response, err := http.Get(s.url + "/" + resource)
-		if err != nil || response.StatusCode >= 300 {
-			log.Printf("%s", err)
 
-			// Locked circuits will not be retried until
-			// they are deemed healthy but the circuit loop.
+		// If there is an error break the circuit.
+		// We can also break the circuit when there is an invalid
+		// response status code.
+		if err != nil {
+			log.Printf("%s", err)
+			log.Print("Connection Broken!")
 			go s.circuit.checkHealth()
-			log.Print("Connection Broken!.")
+
+		} else if response.StatusCode >= 504 {
+			// log.Printf("%d", response.StatusCode)
+			go s.circuit.checkHealth()
 
 		} else {
 			defer response.Body.Close()
@@ -67,9 +74,10 @@ func (s *Service) Get(resource string) ([]byte, error) {
 			return contents, nil
 		}
 	}
-	return nil, errors.New("Circuit broken")
+	return nil, errors.New("connection is not ready")
 }
 
+// NewService client
 func NewService(root string) *Service {
 	return &Service{
 		url:     root,
@@ -84,19 +92,21 @@ func main() {
 	r.GET("/ping", func(c *gin.Context) {
 		contents, err := service1.Get("ping")
 
-		// Failed, response with default
+		// Bad response or broken Connection, respond with default
+		// otherwise return content from upstream service
 		if err != nil {
 			log.Printf("%s", err)
 			c.JSON(200, gin.H{
 				"message": "default response",
 			})
+
 		} else {
-			// Passed, response with contents
 			c.JSON(200, gin.H{
 				"message": string(contents),
 			})
 		}
 
 	})
-	r.Run() // listen and serve on 0.0.0.0:8080
+	// listen and serve on 0.0.0.0:8080
+	r.Run()
 }
