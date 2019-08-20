@@ -5,13 +5,11 @@ import "github.com/gin-gonic/gin"
 func main() {
 	r := gin.Default()
 	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"message": "pong",
-		})
+		c.String(200, "pong")
 	})
 	r.GET("/healthcheck", func(c *gin.Context) {
 		c.JSON(200, gin.H{
-			"message": "pong",
+			"message": "OK",
 		})
 	})
 
